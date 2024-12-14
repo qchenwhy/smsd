@@ -429,7 +429,6 @@ const chooseFile = async () => {
                                     fileList.value.push({
                                         name: fileName,
                                         path: filePath,
-                                        uri: uriString,  // 添加uri属性
                                         size: fileSize,
                                         time: new Date().getTime(),
                                         selected: true
@@ -470,90 +469,98 @@ const chooseFile = async () => {
 }
 
 // 上传文件
+async function uploadFile(file) {
+    return new Promise((resolve, reject) => {
+        const uploadTask = uni.uploadFile({
+            url: 'http://110.40.48.222:54977/upload/audio',
+            filePath: file.path,
+            name: 'file',
+            formData: {
+                'filename': file.name
+            },
+            success: (res) => {
+                console.log('文件上传成功:', file.name, res);
+                try {
+                    if (res.statusCode === 200) {
+                        const response = JSON.parse(res.data);
+                        if (response && response.success) {
+                            resolve(response);
+                        } else {
+                            reject(new Error(response?.message || '上传失败'));
+                        }
+                    } else {
+                        reject(new Error(`上传失败，状态码：${res.statusCode}`));
+                    }
+                } catch (error) {
+                    console.error('处理上传响应出错:', error);
+                    reject(error);
+                }
+            },
+            fail: (err) => {
+                console.error('上传失败:', err);
+                reject(err);
+            }
+        });
+
+        // 监听上传进度
+        if (uploadTask) {
+            uploadTask.onProgressUpdate((res) => {
+                console.log('上传进度:', {
+                    file: file.name,
+                    fileProgress: res.progress,
+                    completed: res.totalBytesSent,
+                    total: res.totalBytesExpectedToSend
+                });
+                
+                // 更新当前文件进度
+                currentFileProgress.value = res.progress;
+                
+                // 更新总进度
+                const totalFiles = fileList.value.filter(f => f.selected).length;
+                const completedFiles = uploadedFiles.value;
+                totalProgress.value = Math.floor((completedFiles * 100 + res.progress) / totalFiles);
+            });
+        }
+    });
+}
+
+// 上传文件
 async function uploadSelectedFiles() {
-	if (!hasSelectedFiles.value || isUploading.value || isLoading.value) return
-	
-	const selectedFiles = fileList.value.filter(file => file.selected)
-	const totalFiles = selectedFiles.length
-	let uploadedFiles = 0
-	
-	isUploading.value = true
-	totalProgress.value = 0
-	
-	try {
-		for (const file of selectedFiles) {
-			currentUploadFile.value = file.name
-			currentFileProgress.value = 0
-			
-			await new Promise((resolve, reject) => {
-				try {
-					const main = plus.android.runtimeMainActivity()
-					const Uri = plus.android.importClass('android.net.Uri')
-					const uri = Uri.parse(file.uri)
-					
-					// 直接使用uri进行上传
-					const uploadTask = uni.uploadFile({
-						url: 'http://110.40.48.222:54977/upload/audio',
-						filePath: file.uri,
-						name: 'file',
-						formData: {
-							'filename': file.name
-						},
-						header: {
-							'Content-Type': 'multipart/form-data'
-						},
-						success: (res) => {
-							console.log('文件上传成功:', file.name, res)
-							uploadedFiles++
-							// 更新总进度
-							totalProgress.value = Math.round((uploadedFiles * 100) / totalFiles)
-							resolve(res)
-						},
-						fail: (err) => {
-							console.error('文件上传失败:', file.name, err)
-							reject(err)
-						}
-					})
-					
-					uploadTask.onProgressUpdate((res) => {
-						// 更新当前文件进度
-						currentFileProgress.value = res.progress
-						// 计算总进度：(已完成文件进度 + 当前文件进度比例) / 总文件数
-						const currentFileContribution = res.progress / totalFiles
-						const completedContribution = (uploadedFiles * 100) / totalFiles
-						totalProgress.value = Math.round(completedContribution + currentFileContribution)
-						
-						console.log('上传进度:', {
-							file: file.name,
-							fileProgress: res.progress,
-							completed: uploadedFiles,
-							total: totalProgress.value
-						})
-					})
-				} catch (error) {
-					console.error('处理文件失败:', error)
-					reject(error)
-				}
-			})
-		}
-		
-		uni.showToast({
-			title: '所有文件上传完成',
-			icon: 'success'
-		})
-	} catch (error) {
-		console.error('上传错误:', error)
-		uni.showToast({
-			title: '上传过程中出现错误',
-			icon: 'none'
-		})
-	} finally {
-		isUploading.value = false
-		currentUploadFile.value = ''
-		currentFileProgress.value = 0
-		totalProgress.value = 0
-		loadFileList()
-	}
+    if (!hasSelectedFiles.value || isUploading.value || isLoading.value) return;
+    
+    try {
+        isUploading.value = true;
+        currentUploadFile.value = '';
+        currentFileProgress.value = 0;
+        totalProgress.value = 0;
+        uploadedFiles.value = 0;
+        
+        const selectedFiles = fileList.value.filter(file => file.selected);
+        
+        for (const file of selectedFiles) {
+            try {
+                currentUploadFile.value = file.name;
+                await uploadFile(file);
+                uploadedFiles.value++;
+            } catch (error) {
+                console.error('上传错误:', error);
+                uni.showToast({
+                    title: `${file.name} 上传失败`,
+                    icon: 'none'
+                });
+            }
+        }
+    } catch (error) {
+        console.error('批量上传错误:', error);
+        uni.showToast({
+            title: '上传过程中出错',
+            icon: 'none'
+        });
+    } finally {
+        isUploading.value = false;
+        currentUploadFile.value = '';
+        currentFileProgress.value = 0;
+    }
 }
 
 // 页面加载时获取文件列表
